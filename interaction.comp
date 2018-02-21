@@ -1,0 +1,56 @@
+#version 450 core
+
+#define eps2 0.2
+
+//based on GPUGems 3 CUDA code
+
+layout(location = 0) uniform float dt;
+layout(location = 1) uniform float G;
+
+layout(local_size_x = 64) in;
+
+//std430 just matches C++ float array format
+//can only be used in shader storage blocks
+layout (binding = 1, std430) buffer particles_pos_in {
+	vec4 part_pos[];
+};
+
+layout (binding = 2, std430) buffer particles_vel {
+	vec4 part_vel[];
+};
+
+shared vec4 current_bodies[gl_WorkGroupSize.x];
+
+void main(){
+	uint id = gl_GlobalInvocationID.x;
+	vec4 pos = part_pos[id];
+	vec4 vel = part_vel[id];
+	vec3 accel = vec3(0.0);
+	
+	for(uint i = 0; i < gl_NumWorkGroups.x * gl_WorkGroupSize.x; i += gl_WorkGroupSize.x)
+	{
+		//each thread of local group writes a body from current i group into
+		//shared array		
+		current_bodies[gl_LocalInvocationIndex] = part_pos[i + gl_LocalInvocationIndex];
+		
+		//calling this barrier ensures that the entire
+		//group reaches this point before proceeding
+		//it is necessary to ensure all writes to current_bodies have completed
+		barrier();
+		for(int j = 0; j < gl_WorkGroupSize.x; j++){
+			vec4 p2 = current_bodies[j];
+			vec3 r = p2.xyz - pos.xyz;
+			float m = p2.w;
+			float mag = length(r);		
+		
+			float dist_sqr = dot(r,r) + eps2;
+			float dist_sixth = dist_sqr * dist_sqr * dist_sqr;
+			float inv_dist_cube = inversesqrt(dist_sixth);
+			
+			accel += r * inv_dist_cube * m;
+		}
+	}
+	part_vel[id] = vec4(G * accel * dt, 0.0) + vel;
+}	
+		
+	
